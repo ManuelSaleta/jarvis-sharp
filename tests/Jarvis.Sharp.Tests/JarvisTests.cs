@@ -365,6 +365,245 @@ public class StateAndCommandTests
         }
     }
 
+    [Fact]
+    public async Task MediaSyncDispatcher_ShouldSendHmacSignature_AndOmitRawWebhookSecret()
+    {
+        var store = new CandidateStateStore();
+        store.SaveBatch("batch-hmac", new[] { new CandidateItem(1, "Dune: Part Two", 2024, "Movie") });
+
+        var httpHandler = new CaptureRequestHttpHandler();
+        using var httpClient = new HttpClient(httpHandler);
+        var dispatcher = new MediaSyncDispatcher(httpClient, store, new AlwaysMissingPlexService());
+
+        var secret = "test-webhook-secret-32-bytes-long";
+        var result = await dispatcher.DispatchApprovedCandidatesAsync(
+            "batch-hmac",
+            new[] { 1 },
+            "U_ADMIN",
+            webhookUrl: "http://media-sync.local/api/v1/sync/trigger",
+            webhookSecret: secret);
+
+        Assert.True(result.Dispatched);
+        Assert.NotNull(httpHandler.LastRequest);
+        Assert.False(httpHandler.LastRequest!.Headers.Contains("X-Webhook-Secret"));
+        Assert.True(httpHandler.LastRequest.Headers.TryGetValues("X-Signature-SHA256", out var sigValues));
+        var signature = Assert.Single(sigValues);
+        Assert.True(HmacSigner.VerifySignature(secret, httpHandler.LastBody!, signature));
+    }
+
+    [Fact]
+    public void CandidateStateStore_ShouldLogWarning_WhenPersistFails()
+    {
+        var blockingFile = Path.Combine(Path.GetTempPath(), $"jarvis-block-{Guid.NewGuid()}");
+        File.WriteAllText(blockingFile, "not-a-directory");
+        var invalidStatePath = Path.Combine(blockingFile, "state.json");
+
+        try
+        {
+            var logger = new RecordingLogger<CandidateStateStore>();
+            var store = new CandidateStateStore(stateFilePath: invalidStatePath, logger: logger);
+            store.SaveBatch("batch-err", new[] { new CandidateItem(1, "Test", 2025, "Movie") });
+
+            Assert.Contains(logger.Entries, e =>
+                e.Level == Microsoft.Extensions.Logging.LogLevel.Warning &&
+                e.Message.Contains("Failed to persist candidate state", StringComparison.Ordinal));
+        }
+        finally
+        {
+            if (File.Exists(blockingFile)) File.Delete(blockingFile);
+        }
+    }
+
+    [Fact]
+    public void Program_ValidateRequiredEnvironment_ShouldReportMissingVariables()
+    {
+        var allMissing = Program.ValidateRequiredEnvironment(_ => null);
+        Assert.Equal(5, allMissing.Count);
+        Assert.Contains("SLACK_APP_TOKEN", allMissing);
+        Assert.Contains("SLACK_BOT_TOKEN", allMissing);
+        Assert.Contains("USER_WHITELIST", allMissing);
+        Assert.Contains("WEBHOOK_SECRET_TOKEN", allMissing);
+        Assert.Contains("MEDIA_SYNC_WEBHOOK_URL", allMissing);
+
+        var env = new Dictionary<string, string>
+        {
+            ["SLACK_APP_TOKEN"] = "xapp-test",
+            ["SLACK_BOT_TOKEN"] = "xoxb-test",
+            ["USER_WHITELIST"] = "U123",
+            ["WEBHOOK_SECRET_TOKEN"] = "secret",
+            ["MEDIA_SYNC_WEBHOOK_URL"] = "http://localhost:5050/trigger"
+        };
+        var noneMissing = Program.ValidateRequiredEnvironment(k => env.GetValueOrDefault(k));
+        Assert.Empty(noneMissing);
+    }
+
+    [Fact]
+    public async Task HealthProbeServer_ShouldServeHealthzAndReadyz()
+    {
+        using var tcp = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        tcp.Start();
+        var port = ((System.Net.IPEndPoint)tcp.LocalEndpoint).Port;
+        tcp.Stop();
+
+        var ready = false;
+        await using var server = new HealthProbeServer(
+            port,
+            () => ready,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance,
+            host: "localhost");
+
+        using var cts = new CancellationTokenSource();
+        server.Start(cts.Token);
+
+        using var client = new HttpClient { BaseAddress = new Uri($"http://localhost:{port}") };
+
+        var healthResp = await client.GetAsync("/healthz");
+        Assert.Equal(System.Net.HttpStatusCode.OK, healthResp.StatusCode);
+
+        var notReadyResp = await client.GetAsync("/readyz");
+        Assert.Equal(System.Net.HttpStatusCode.ServiceUnavailable, notReadyResp.StatusCode);
+
+        ready = true;
+        var readyResp = await client.GetAsync("/readyz");
+        Assert.Equal(System.Net.HttpStatusCode.OK, readyResp.StatusCode);
+
+        var notFoundResp = await client.GetAsync("/unknown");
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, notFoundResp.StatusCode);
+    }
+
+    [Fact]
+    public async Task Worker_ShouldRetrySocketModeConnectWithExponentialBackoff()
+    {
+        var origApp = Environment.GetEnvironmentVariable("SLACK_APP_TOKEN");
+        var origBot = Environment.GetEnvironmentVariable("SLACK_BOT_TOKEN");
+        try
+        {
+            Environment.SetEnvironmentVariable("SLACK_APP_TOKEN", "xapp-test-token");
+            Environment.SetEnvironmentVariable("SLACK_BOT_TOKEN", "xoxb-test-token");
+
+            var fakeSocket = new FakeSocketModeClient(failuresBeforeSuccess: 2);
+            var worker = new Worker(
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<Worker>.Instance,
+                new AuthorizationGuard("U_TEST"),
+                new CandidateStateStore(),
+                fakeSocket,
+                initialRetryDelay: TimeSpan.FromMilliseconds(10),
+                maxRetryDelay: TimeSpan.FromMilliseconds(40),
+                healthPort: 0);
+
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await worker.StartAsync(cts.Token);
+
+            var deadline = DateTime.UtcNow.AddSeconds(3);
+            while (!worker.IsReady && DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(15);
+            }
+
+            Assert.True(worker.IsReady);
+            Assert.Equal(3, fakeSocket.ConnectAttempts);
+
+            await worker.StopAsync(CancellationToken.None);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("SLACK_APP_TOKEN", origApp);
+            Environment.SetEnvironmentVariable("SLACK_BOT_TOKEN", origBot);
+        }
+    }
+
+    private sealed class CaptureRequestHttpHandler : HttpMessageHandler
+    {
+        public HttpRequestMessage? LastRequest { get; private set; }
+        public byte[]? LastBody { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            LastRequest = request;
+            LastBody = request.Content != null ? await request.Content.ReadAsByteArrayAsync(cancellationToken) : null;
+            return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"status\":\"ok\"}", Encoding.UTF8, "application/json")
+            };
+        }
+    }
+
+    private sealed class AlwaysMissingPlexService : IPlexService
+    {
+        public Task<PlexQueryResult> QueryPlexLibraryAsync(
+            string title,
+            int? year = null,
+            string? plexUrl = null,
+            string? plexToken = null,
+            string? existingInventoryPath = null,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new PlexQueryResult(false, title, year, "None"));
+        }
+    }
+
+    private sealed class RecordingLogger<T> : Microsoft.Extensions.Logging.ILogger<T>
+    {
+        public List<(Microsoft.Extensions.Logging.LogLevel Level, string Message)> Entries { get; } = new();
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            Microsoft.Extensions.Logging.LogLevel logLevel,
+            Microsoft.Extensions.Logging.EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            Entries.Add((logLevel, formatter(state, exception)));
+        }
+    }
+
+    private sealed class FakeSocketModeClient : SlackNet.ISlackSocketModeClient
+    {
+        private readonly int _failuresBeforeSuccess;
+        public int ConnectAttempts { get; private set; }
+        public bool Connected { get; private set; }
+
+        public FakeSocketModeClient(int failuresBeforeSuccess)
+        {
+            _failuresBeforeSuccess = failuresBeforeSuccess;
+        }
+
+        public Task Connect(SlackNet.SocketMode.SocketModeConnectionOptions? connectionOptions = null, CancellationToken cancellationToken = default)
+        {
+            ConnectAttempts++;
+            if (ConnectAttempts <= _failuresBeforeSuccess)
+            {
+                throw new HttpRequestException("Transient DNS failure");
+            }
+            Connected = true;
+            return Task.CompletedTask;
+        }
+
+        public void Disconnect()
+        {
+            Connected = false;
+        }
+
+        public Task DisconnectAsync()
+        {
+            Connected = false;
+            return Task.CompletedTask;
+        }
+
+        public Task DisconnectAsync(CancellationToken cancellationToken = default)
+        {
+            Connected = false;
+            return Task.CompletedTask;
+        }
+
+        public void Dispose() { }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
     private class MockDispatcher : IMediaSyncDispatcher
     {
         public Task<DispatchResult> DispatchApprovedCandidatesAsync(

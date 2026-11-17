@@ -18,6 +18,7 @@ COPY tests/ tests/
 
 RUN dotnet test tests/Jarvis.Sharp.Tests/Jarvis.Sharp.Tests.csproj -c Release --no-restore
 RUN dotnet publish src/Jarvis.Sharp/Jarvis.Sharp.csproj -c Release -o /app/publish --no-restore
+RUN mkdir -p /state
 
 # =============================================================================
 # Minimal Runtime Stage (Ubuntu Noble Chiseled - Non-Root)
@@ -26,6 +27,7 @@ FROM mcr.microsoft.com/dotnet/runtime:10.0-noble-chiseled AS final
 WORKDIR /app
 
 COPY --from=build /app/publish .
+COPY --from=build --chown=$APP_UID:$APP_UID /state /state
 
 # Use non-root user built into chiseled images
 USER $APP_UID

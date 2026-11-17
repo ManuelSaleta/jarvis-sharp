@@ -118,7 +118,6 @@ public class MediaSyncDispatcher : IMediaSyncDispatcher
         using var request = new HttpRequestMessage(HttpMethod.Post, resolvedUrl);
         request.Content = new ByteArrayContent(jsonBytes);
         request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
-        request.Headers.Add("X-Webhook-Secret", resolvedSecret);
         request.Headers.Add("X-Signature-SHA256", signature);
 
         var response = await _httpClient.SendAsync(request, cancellationToken);

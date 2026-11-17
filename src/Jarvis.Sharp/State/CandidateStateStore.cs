@@ -2,19 +2,25 @@ namespace Jarvis.Sharp.State;
 
 using System.Collections.Concurrent;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 
 public class CandidateStateStore
 {
     private readonly TimeSpan _ttl;
     private readonly string? _stateFilePath;
+    private readonly ILogger<CandidateStateStore>? _logger;
     private readonly ConcurrentDictionary<string, CandidateBatch> _batches = new(StringComparer.Ordinal);
     private string? _lastBatchId;
     private readonly object _fileLock = new();
 
-    public CandidateStateStore(TimeSpan? ttl = null, string? stateFilePath = null)
+    public CandidateStateStore(
+        TimeSpan? ttl = null,
+        string? stateFilePath = null,
+        ILogger<CandidateStateStore>? logger = null)
     {
         _ttl = ttl ?? TimeSpan.FromHours(24);
         _stateFilePath = stateFilePath;
+        _logger = logger;
         LoadFromDisk();
     }
 
@@ -105,9 +111,13 @@ public class CandidateStateStore
                 var json = JsonSerializer.Serialize(_batches.Values, new JsonSerializerOptions { WriteIndented = true });
                 File.WriteAllText(_stateFilePath, json);
             }
-            catch
+            catch (Exception ex)
             {
-                // Non-fatal logging or swallow for in-memory operations
+                _logger?.LogWarning(ex, "Failed to persist candidate state to '{StateFilePath}'.", _stateFilePath);
+                if (_logger == null)
+                {
+                    Console.Error.WriteLine($"[CandidateStateStore] Failed to persist candidate state to '{_stateFilePath}': {ex.Message}");
+                }
             }
         }
     }
@@ -134,9 +144,13 @@ public class CandidateStateStore
                     }
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                // Fallback to empty store if corrupt
+                _logger?.LogWarning(ex, "Failed to load candidate state from '{StateFilePath}'; starting with empty store.", _stateFilePath);
+                if (_logger == null)
+                {
+                    Console.Error.WriteLine($"[CandidateStateStore] Failed to load candidate state from '{_stateFilePath}': {ex.Message}");
+                }
             }
         }
     }
