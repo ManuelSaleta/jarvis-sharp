@@ -73,7 +73,7 @@ flowchart TD
 | `SLACK_BOT_TOKEN` | Slack Bot OAuth token (`xoxb-...`) with `chat:write` | Required |
 | `USER_WHITELIST` | Comma-separated list of authorized Slack User IDs | Required (Fail-closed) |
 | `SLACK_ALERTS_CHANNEL` | Slack channel ID for alert interception (e.g. `C0CHSUZCF0B`) | Optional |
-| `MEDIA_SYNC_WEBHOOK_URL`| In-cluster webhook URL for `media-sync` | `http://media-sync-service.media.svc.cluster.local:30080/api/v1/sync/trigger` |
+| `MEDIA_SYNC_WEBHOOK_URL`| In-cluster webhook URL for `media-sync` | `http://media-sync-service.media.svc.cluster.local:5050/api/v1/sync/trigger` |
 | `WEBHOOK_SECRET_TOKEN` | Shared 32-byte secret for HMAC-SHA256 signing | Required |
 | `GRAFANA_URL` | Base URL for Grafana Ingress | `http://promstack-grafana.monitoring.svc.cluster.local` |
 | `GRAFANA_TOKEN` | Read-only Grafana Service Account Bearer Token | Optional |

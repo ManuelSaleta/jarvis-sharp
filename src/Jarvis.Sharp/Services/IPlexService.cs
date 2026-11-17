@@ -2,6 +2,8 @@ namespace Jarvis.Sharp.Services;
 
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Plex.Core.Http;
+using Plex.Core.Http.Models;
 
 public record PlexQueryResult(bool Exists, string Title, int? Year, string Source);
 
@@ -18,14 +20,14 @@ public interface IPlexService
 
 public partial class PlexService : IPlexService
 {
-    private readonly HttpClient _httpClient;
+    private readonly IPlexClient _plexClient;
 
     [GeneratedRegex("[^a-zA-Z0-9 ]", RegexOptions.Compiled)]
     private static partial Regex AlphanumericRegex();
 
-    public PlexService(HttpClient httpClient)
+    public PlexService(IPlexClient plexClient)
     {
-        _httpClient = httpClient;
+        _plexClient = plexClient;
     }
 
     public async Task<PlexQueryResult> QueryPlexLibraryAsync(
@@ -39,40 +41,52 @@ public partial class PlexService : IPlexService
         ArgumentException.ThrowIfNullOrWhiteSpace(title);
 
         var normalizedTarget = NormalizeTitle(title);
-        var resolvedUrl = (plexUrl ?? Environment.GetEnvironmentVariable("PLEX_URL") ?? string.Empty).TrimEnd('/');
-        var resolvedToken = plexToken ?? Environment.GetEnvironmentVariable("PLEX_TOKEN") ?? string.Empty;
+        var resolvedUrl = (plexUrl ?? Environment.GetEnvironmentVariable("PLEX_URL") ?? string.Empty).Trim().TrimEnd('/');
+        var resolvedToken = (plexToken ?? Environment.GetEnvironmentVariable("PLEX_TOKEN") ?? string.Empty).Trim();
         var resolvedInventory = existingInventoryPath ?? Environment.GetEnvironmentVariable("EXISTING_MOVIES_INDEX_PATH") ?? "/state/existing-movies.json";
 
         if (!string.IsNullOrEmpty(resolvedUrl) && !string.IsNullOrEmpty(resolvedToken))
         {
+            PlexClient? overrideClient = null;
             try
             {
-                var searchUrl = $"{resolvedUrl}/search?query={Uri.EscapeDataString(title)}";
-                using var request = new HttpRequestMessage(HttpMethod.Get, searchUrl);
-                request.Headers.Add("X-Plex-Token", resolvedToken);
-                request.Headers.Add("Accept", "application/json");
+                var configuredUrl = _plexClient.Options.ServerUri?.ToString().TrimEnd('/') ?? string.Empty;
+                var useInjectedClient =
+                    string.Equals(configuredUrl, resolvedUrl, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(_plexClient.Options.Token, resolvedToken, StringComparison.Ordinal);
 
-                using var response = await _httpClient.SendAsync(request, cancellationToken);
-                if (response.IsSuccessStatusCode)
+                IPlexClient client;
+                if (useInjectedClient)
                 {
-                    using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-                    using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-                    if (doc.RootElement.TryGetProperty("MediaContainer", out var mc) &&
-                        mc.TryGetProperty("Metadata", out var metadataList) &&
-                        metadataList.ValueKind == JsonValueKind.Array)
+                    client = _plexClient;
+                }
+                else
+                {
+                    overrideClient = new PlexClient(new PlexClientOptions
                     {
-                        foreach (var item in metadataList.EnumerateArray())
-                        {
-                            var itemTitle = item.TryGetProperty("title", out var t) ? t.GetString() ?? string.Empty : string.Empty;
-                            var itemYear = item.TryGetProperty("year", out var y) && y.TryGetInt32(out var parsedYear) ? parsedYear : (int?)null;
+                        ServerUrl = resolvedUrl,
+                        Token = resolvedToken,
+                        Product = "Jarvis.Sharp"
+                    });
+                    client = overrideClient;
+                }
 
-                            if (NormalizeTitle(itemTitle) == normalizedTarget)
-                            {
-                                if (year == null || itemYear == null || year == itemYear)
-                                {
-                                    return new PlexQueryResult(true, itemTitle, itemYear, "Plex REST API");
-                                }
-                            }
+                var response = await client.GetAsync<PlexMediaContainer>(
+                    $"/search?query={Uri.EscapeDataString(title)}",
+                    cancellationToken);
+
+                var metadataList = response?.MediaContainer?.Metadata;
+                if (metadataList != null)
+                {
+                    foreach (var item in metadataList)
+                    {
+                        var itemTitle = item.Title ?? string.Empty;
+                        var itemYear = item.Year;
+
+                        if (NormalizeTitle(itemTitle) == normalizedTarget &&
+                            (year == null || itemYear == null || year == itemYear))
+                        {
+                            return new PlexQueryResult(true, itemTitle, itemYear, "Plex REST API");
                         }
                     }
                 }
@@ -80,6 +94,10 @@ public partial class PlexService : IPlexService
             catch
             {
                 // Fall back to local inventory on connection failure
+            }
+            finally
+            {
+                overrideClient?.Dispose();
             }
         }
 
