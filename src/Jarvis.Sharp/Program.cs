@@ -8,6 +8,7 @@ using k8s;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Plex.Core.Http.Extensions;
 using SlackNet;
 using SlackNet.Blocks;
 using SlackNet.Events;
@@ -27,7 +28,13 @@ public static class Program
 
         // HTTP Client & Services
         builder.Services.AddHttpClient();
-        builder.Services.AddHttpClient<IPlexService, PlexService>();
+        builder.Services.AddPlexClient(options =>
+        {
+            options.ServerUrl = Environment.GetEnvironmentVariable("PLEX_URL")?.Trim() ?? string.Empty;
+            options.Token = Environment.GetEnvironmentVariable("PLEX_TOKEN")?.Trim() ?? string.Empty;
+            options.Product = "Jarvis.Sharp";
+        });
+        builder.Services.AddTransient<IPlexService, PlexService>();
         builder.Services.AddHttpClient<IMediaSyncDispatcher, MediaSyncDispatcher>();
         builder.Services.AddHttpClient<IGrafanaLokiService, GrafanaLokiService>();
 

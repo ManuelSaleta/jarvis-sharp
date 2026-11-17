@@ -259,6 +259,112 @@ public class StateAndCommandTests
         Assert.Contains("⛔", response.Message.Text);
     }
 
+    [Fact]
+    public async Task PlexService_ShouldMatchNormalizedTitleAndYearViaPlexClient()
+    {
+        var handler = new MockPlexHttpHandler("""
+            {"MediaContainer":{"Metadata":[{"title":"The Matrix: Reloaded","year":2003}]}}
+            """);
+        using var httpClient = new HttpClient(handler);
+        using var plexClient = new Plex.Core.Http.PlexClient(
+            httpClient,
+            new Plex.Core.Http.PlexClientOptions
+            {
+                ServerUrl = "http://plex.local:32400",
+                Token = "test-token"
+            },
+            disposeClient: false);
+
+        var service = new PlexService(plexClient);
+        var result = await service.QueryPlexLibraryAsync(
+            "the matrix reloaded",
+            2003,
+            plexUrl: "http://plex.local:32400",
+            plexToken: "test-token",
+            existingInventoryPath: Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".json"));
+
+        Assert.True(result.Exists);
+        Assert.Equal("The Matrix: Reloaded", result.Title);
+        Assert.Equal(2003, result.Year);
+        Assert.Equal("Plex REST API", result.Source);
+        Assert.Equal("http://plex.local:32400/search?query=the%20matrix%20reloaded", handler.LastRequestUri?.AbsoluteUri);
+        Assert.Equal("test-token", handler.LastToken);
+    }
+
+    [Fact]
+    public async Task PlexService_ShouldFallbackToLocalInventoryOnPlexError()
+    {
+        var tempFile = Path.Combine(Path.GetTempPath(), $"plex-inv-{Guid.NewGuid()}.json");
+        await File.WriteAllTextAsync(tempFile, """[{"title":"Dune","year":2021}]""");
+
+        try
+        {
+            var handler = new MockPlexHttpHandler("error", System.Net.HttpStatusCode.InternalServerError);
+            using var httpClient = new HttpClient(handler);
+            using var plexClient = new Plex.Core.Http.PlexClient(
+                httpClient,
+                new Plex.Core.Http.PlexClientOptions
+                {
+                    ServerUrl = "http://plex.local:32400",
+                    Token = "test-token"
+                },
+                disposeClient: false);
+
+            var service = new PlexService(plexClient);
+            var hit = await service.QueryPlexLibraryAsync(
+                "Dune",
+                2021,
+                plexUrl: "http://plex.local:32400",
+                plexToken: "test-token",
+                existingInventoryPath: tempFile);
+
+            Assert.True(hit.Exists);
+            Assert.Equal("Dune", hit.Title);
+            Assert.Equal(2021, hit.Year);
+            Assert.Equal("Local Inventory File", hit.Source);
+
+            var miss = await service.QueryPlexLibraryAsync(
+                "Dune",
+                1984,
+                plexUrl: "http://plex.local:32400",
+                plexToken: "test-token",
+                existingInventoryPath: tempFile);
+
+            Assert.False(miss.Exists);
+            Assert.Equal("None", miss.Source);
+        }
+        finally
+        {
+            if (File.Exists(tempFile)) File.Delete(tempFile);
+        }
+    }
+
+    private sealed class MockPlexHttpHandler : HttpMessageHandler
+    {
+        private readonly string _payload;
+        private readonly System.Net.HttpStatusCode _statusCode;
+
+        public Uri? LastRequestUri { get; private set; }
+        public string? LastToken { get; private set; }
+
+        public MockPlexHttpHandler(string payload, System.Net.HttpStatusCode statusCode = System.Net.HttpStatusCode.OK)
+        {
+            _payload = payload;
+            _statusCode = statusCode;
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            LastRequestUri = request.RequestUri;
+            LastToken = request.Headers.TryGetValues("X-Plex-Token", out var vals) ? vals.FirstOrDefault() : null;
+            var response = new HttpResponseMessage(_statusCode)
+            {
+                Content = new StringContent(_payload, System.Text.Encoding.UTF8, "application/json")
+            };
+            return Task.FromResult(response);
+        }
+    }
+
     private class MockDispatcher : IMediaSyncDispatcher
     {
         public Task<DispatchResult> DispatchApprovedCandidatesAsync(
