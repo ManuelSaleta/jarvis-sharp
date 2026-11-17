@@ -16,6 +16,29 @@ using SlackNet.Extensions.DependencyInjection;
 
 public static class Program
 {
+    public static readonly string[] RequiredEnvironmentVariables =
+    {
+        "SLACK_APP_TOKEN",
+        "SLACK_BOT_TOKEN",
+        "USER_WHITELIST",
+        "WEBHOOK_SECRET_TOKEN",
+        "MEDIA_SYNC_WEBHOOK_URL"
+    };
+
+    public static IReadOnlyList<string> ValidateRequiredEnvironment(Func<string, string?>? getEnvironmentVariable = null)
+    {
+        var getter = getEnvironmentVariable ?? Environment.GetEnvironmentVariable;
+        var missing = new List<string>();
+        foreach (var name in RequiredEnvironmentVariables)
+        {
+            if (string.IsNullOrWhiteSpace(getter(name)))
+            {
+                missing.Add(name);
+            }
+        }
+        return missing.AsReadOnly();
+    }
+
     public static void Main(string[] args)
     {
         var builder = Host.CreateApplicationBuilder(args);
@@ -23,8 +46,9 @@ public static class Program
         // Security & State
         builder.Services.AddSingleton(new AuthorizationGuard());
         builder.Services.AddSingleton(new RateLimiter(maxRequests: 10, windowSeconds: 60.0));
-        builder.Services.AddSingleton(new CandidateStateStore(
-            stateFilePath: Environment.GetEnvironmentVariable("CANDIDATE_STATE_PATH")));
+        builder.Services.AddSingleton(sp => new CandidateStateStore(
+            stateFilePath: Environment.GetEnvironmentVariable("CANDIDATE_STATE_PATH"),
+            logger: sp.GetService<ILogger<CandidateStateStore>>()));
 
         // HTTP Client & Services
         builder.Services.AddHttpClient();
@@ -89,7 +113,19 @@ public static class Program
         // Background Worker Daemon
         builder.Services.AddHostedService<Worker>();
 
-        var host = builder.Build();
+        using var host = builder.Build();
+
+        var missingEnvVars = ValidateRequiredEnvironment();
+        if (missingEnvVars.Count > 0)
+        {
+            var startupLogger = host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Jarvis.Sharp.Startup");
+            startupLogger.LogCritical(
+                "❌ [Jarvis.Sharp] Missing required environment variable(s): {MissingVariables}. Failing fast.",
+                string.Join(", ", missingEnvVars));
+            Environment.ExitCode = 1;
+            return;
+        }
+
         host.Run();
     }
 }

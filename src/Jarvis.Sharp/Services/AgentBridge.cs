@@ -50,12 +50,13 @@ public class AgentBridge : IAgentBridge
             var psi = new ProcessStartInfo
             {
                 FileName = _agyBinary,
-                Arguments = $"--prompt \"{fullPrompt.ToString().Replace("\"", "\\\"")}\"",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true,
             };
+            psi.ArgumentList.Add("--prompt");
+            psi.ArgumentList.Add(fullPrompt.ToString());
 
             using var process = new Process { StartInfo = psi };
             if (!process.Start())

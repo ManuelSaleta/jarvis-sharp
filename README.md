@@ -81,6 +81,7 @@ flowchart TD
 | `PLEX_URL` | Local Plex Media Server endpoint | `http://192.168.1.210:32400` |
 | `PLEX_TOKEN` | Plex API authentication token | Optional |
 | `CANDIDATE_STATE_PATH` | Path to candidate batch JSON persistence file | `/state/candidate-state.json` |
+| `HEALTH_PORT` | HTTP port for Kubernetes `/healthz` and `/readyz` probes (`0` to disable) | `8080` |
 
 ---
 
@@ -91,7 +92,7 @@ flowchart TD
 # Build solution
 dotnet build Jarvis.Sharp.slnx
 
-# Run unit test suite (14 tests)
+# Run unit test suite (21 tests)
 dotnet test Jarvis.Sharp.slnx
 
 # Run daemon locally
