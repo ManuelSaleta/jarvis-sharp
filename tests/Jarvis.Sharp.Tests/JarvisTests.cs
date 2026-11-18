@@ -660,4 +660,29 @@ public class StateAndCommandTests
         Assert.Contains("\"year\":2022", capturedBody);
         Assert.Contains("\"media_type\":\"TV\"", capturedBody);
     }
+
+    [Fact]
+    public async Task DownloadCommandHandler_ShouldDispatchDirectTitle_WhenTitleContainsNumbers()
+    {
+        var guard = new AuthorizationGuard("U_AUTHORIZED");
+        var limiter = new RateLimiter();
+        var store = new CandidateStateStore();
+        var dispatcher = new MockDispatcher();
+        var handler = new Jarvis.Sharp.Slack.DownloadCommandHandler(
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<Jarvis.Sharp.Slack.DownloadCommandHandler>.Instance,
+            guard,
+            limiter,
+            store,
+            dispatcher);
+
+        var command = new SlackNet.Interaction.SlashCommand
+        {
+            UserId = "U_AUTHORIZED",
+            Text = "Batman Knightfall Part 2: Knightquest"
+        };
+
+        var response = await handler.Handle(command);
+        Assert.Equal(SlackNet.Interaction.ResponseType.InChannel, response.ResponseType);
+        Assert.Contains("Batman Knightfall Part 2: Knightquest", response.Message.Text);
+    }
 }
