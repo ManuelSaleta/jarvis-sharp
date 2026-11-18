@@ -73,35 +73,43 @@ flowchart TD
 | `SLACK_BOT_TOKEN` | Slack Bot OAuth token (`xoxb-...`) with `chat:write` | Required |
 | `USER_WHITELIST` | Comma-separated list of authorized Slack User IDs | Required (Fail-closed) |
 | `SLACK_ALERTS_CHANNEL` | Slack channel ID for alert interception (e.g. `C0CHSUZCF0B`) | Optional |
-| `MEDIA_SYNC_WEBHOOK_URL`| In-cluster webhook URL for `media-sync` | `http://media-sync-service.media.svc.cluster.local:5050/api/v1/sync/trigger` |
+| `MEDIA_SYNC_WEBHOOK_URL` | In-cluster webhook URL for `media-sync` | `http://media-sync-service.media.svc.cluster.local:5050/api/v1/sync/trigger` |
 | `WEBHOOK_SECRET_TOKEN` | Shared 32-byte secret for HMAC-SHA256 signing | Required |
 | `GRAFANA_URL` | Base URL for Grafana Ingress | `http://promstack-grafana.monitoring.svc.cluster.local` |
 | `GRAFANA_TOKEN` | Read-only Grafana Service Account Bearer Token | Optional |
-| `GRAFANA_LOKI_DATASOURCE_UID`| Loki datasource UID in Grafana | `loki` |
+| `GRAFANA_LOKI_DATASOURCE_UID` | Loki datasource UID in Grafana | `loki` |
 | `PLEX_URL` | Local Plex Media Server endpoint | `http://192.168.1.210:32400` |
 | `PLEX_TOKEN` | Plex API authentication token | Optional |
 | `CANDIDATE_STATE_PATH` | Path to candidate batch JSON persistence file | `/state/candidate-state.json` |
 | `HEALTH_PORT` | HTTP port for Kubernetes `/healthz` and `/readyz` probes (`0` to disable) | `8080` |
+| `AGY_BINARY` | Path to Antigravity CLI (`agy`) binary | `/usr/local/bin/agy` (in container) / `agy` |
+| `AGY_WORKSPACE` | Workspace directory passed to `agy` via `--add-dir` for rules/customizations | `/workspace` (in container) |
 
 ---
 
 ## 🚀 Building & Testing
 
 ### Local Development (.NET 10 SDK)
+
 ```bash
 # Build solution
 dotnet build Jarvis.Sharp.slnx
 
-# Run unit test suite (21 tests)
+# Run unit test suite (26 tests)
 dotnet test Jarvis.Sharp.slnx
 
 # Run daemon locally
 dotnet run --project src/Jarvis.Sharp/Jarvis.Sharp.csproj
 ```
 
-### Docker Multi-Stage Container Build
+### Docker Multi-Stage Container Build & Compose
+
 ```bash
+# Build image (includes agy CLI)
 docker build -t ghcr.io/manuelsaleta/jarvis-sharp:latest .
+
+# Run with Docker Compose (mounts ~/.gemini and workspace customizations)
+docker compose up -d --build
 ```
 
 ---

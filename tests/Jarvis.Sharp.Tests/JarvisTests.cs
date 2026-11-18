@@ -685,4 +685,61 @@ public class StateAndCommandTests
         Assert.Equal(SlackNet.Interaction.ResponseType.InChannel, response.ResponseType);
         Assert.Contains("Batman Knightfall Part 2: Knightquest", response.Message.Text);
     }
+
+    [Fact]
+    public async Task AgentBridge_AskAsync_ShouldReturnGuidance_WhenPromptIsEmpty()
+    {
+        var bridge = new AgentBridge(
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentBridge>.Instance,
+            new StubKubernetesDiagnostics(),
+            agyBinary: "/nonexistent/agy");
+
+        var reply = await bridge.AskAsync("   ");
+        Assert.Equal("Please provide a non-empty prompt for Antigravity.", reply);
+    }
+
+    [Fact]
+    public async Task AgentBridge_AskAsync_ShouldReturnFriendlyNotice_WhenBinaryIsMissing()
+    {
+        var bridge = new AgentBridge(
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentBridge>.Instance,
+            new StubKubernetesDiagnostics(),
+            agyBinary: "/nonexistent/agy-binary-path");
+
+        var reply = await bridge.AskAsync("check cluster status");
+        Assert.Contains("Antigravity CLI (`/nonexistent/agy-binary-path`) invocation notice:", reply);
+    }
+
+    [Fact]
+    public async Task AgentBridge_AskAsync_ShouldPassWorkspaceAddDir_WhenWorkspaceExists()
+    {
+        var tempWorkspace = Path.Combine(Path.GetTempPath(), $"jarvis-agy-ws-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempWorkspace);
+        try
+        {
+            var bridge = new AgentBridge(
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentBridge>.Instance,
+                new StubKubernetesDiagnostics(),
+                agyBinary: "/bin/echo",
+                agyWorkspace: tempWorkspace);
+
+            var reply = await bridge.AskAsync("status", new Dictionary<string, string> { ["channel_id"] = "C123" });
+            Assert.Contains($"--add-dir {tempWorkspace}", reply);
+            Assert.Contains("--prompt", reply);
+            Assert.Contains("channel_id: C123", reply);
+        }
+        finally
+        {
+            Directory.Delete(tempWorkspace, recursive: true);
+        }
+    }
+
+    private sealed class StubKubernetesDiagnostics : IKubernetesDiagnostics
+    {
+        public Task<PodDiagnosticsResult> GetPodDiagnosticsAsync(string ns, string pod, int tailLines = 80, CancellationToken cancellationToken = default)
+            => Task.FromResult(new PodDiagnosticsResult(ns, pod, true, "Running", "ok"));
+
+        public Task<RestartDeploymentResult> RestartDeploymentAsync(string ns, string deployment, CancellationToken cancellationToken = default)
+            => Task.FromResult(new RestartDeploymentResult(ns, deployment, true, "restarted"));
+    }
 }

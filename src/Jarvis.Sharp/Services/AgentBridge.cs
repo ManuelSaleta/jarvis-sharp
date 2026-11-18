@@ -9,15 +9,19 @@ public class AgentBridge : IAgentBridge
     private readonly ILogger<AgentBridge> _logger;
     private readonly IKubernetesDiagnostics _k8sDiagnostics;
     private readonly string _agyBinary;
+    private readonly string? _agyWorkspace;
     private readonly TimeSpan _timeout;
 
     public AgentBridge(
         ILogger<AgentBridge> logger,
-        IKubernetesDiagnostics k8sDiagnostics)
+        IKubernetesDiagnostics k8sDiagnostics,
+        string? agyBinary = null,
+        string? agyWorkspace = null)
     {
         _logger = logger;
         _k8sDiagnostics = k8sDiagnostics;
-        _agyBinary = Environment.GetEnvironmentVariable("AGY_BINARY") ?? "agy";
+        _agyBinary = (agyBinary ?? Environment.GetEnvironmentVariable("AGY_BINARY") ?? "agy").Trim();
+        _agyWorkspace = (agyWorkspace ?? Environment.GetEnvironmentVariable("AGY_WORKSPACE"))?.Trim();
         _timeout = TimeSpan.FromSeconds(90);
     }
 
@@ -55,6 +59,12 @@ public class AgentBridge : IAgentBridge
                 UseShellExecute = false,
                 CreateNoWindow = true,
             };
+            if (!string.IsNullOrWhiteSpace(_agyWorkspace) && Directory.Exists(_agyWorkspace))
+            {
+                psi.WorkingDirectory = _agyWorkspace;
+                psi.ArgumentList.Add("--add-dir");
+                psi.ArgumentList.Add(_agyWorkspace);
+            }
             psi.ArgumentList.Add("--prompt");
             psi.ArgumentList.Add(fullPrompt.ToString());
 

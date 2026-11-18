@@ -1,0 +1,37 @@
+services:
+  jarvis-sharp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ghcr.io/manuelsaleta/jarvis-sharp:latest
+    container_name: jarvis-sharp
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      TZ: ${TZ:-America/New_York}
+      HOME: /home/app
+      AGY_BINARY: /usr/local/bin/agy
+      AGY_WORKSPACE: /workspace
+      CANDIDATE_STATE_PATH: /state/candidates.json
+      EXISTING_MOVIES_INDEX_PATH: /state/existing-movies.json
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+      SLACK_APP_TOKEN: ${SLACK_APP_TOKEN:-}
+      USER_WHITELIST: ${USER_WHITELIST:-}
+      SLACK_ALERTS_CHANNEL: ${SLACK_ALERTS_CHANNEL:-}
+      MEDIA_SYNC_WEBHOOK_URL: ${MEDIA_SYNC_WEBHOOK_URL:-http://media-sync-service.media.svc.cluster.local:5050/api/v1/sync/trigger}
+      WEBHOOK_SECRET_TOKEN: ${WEBHOOK_SECRET_TOKEN:-}
+      PLEX_URL: ${PLEX_URL:-}
+      PLEX_TOKEN: ${PLEX_TOKEN:-}
+      GRAFANA_URL: ${GRAFANA_URL:-}
+      GRAFANA_TOKEN: ${GRAFANA_TOKEN:-}
+      GRAFANA_LOKI_DATASOURCE_UID: ${GRAFANA_LOKI_DATASOURCE_UID:-loki}
+    volumes:
+      - jarvis-state:/state
+      # Mount Antigravity CLI auth, settings, skills, and MCP configuration
+      - ${HOME}/.gemini:/home/app/.gemini
+      # Mount workspace rules/customizations (e.g., AGENTS.md, .agents/) read-only
+      - ${AGY_WORKSPACE_HOST:-.}:/workspace:ro
+
+volumes:
+  jarvis-state:
