@@ -82,8 +82,10 @@ flowchart TD
 | `PLEX_TOKEN` | Plex API authentication token | Optional |
 | `CANDIDATE_STATE_PATH` | Path to candidate batch JSON persistence file | `/state/candidate-state.json` |
 | `HEALTH_PORT` | HTTP port for Kubernetes `/healthz` and `/readyz` probes (`0` to disable) | `8080` |
-| `AGY_BINARY` | Path to Antigravity CLI (`agy`) binary | `/usr/local/bin/agy` (in container) / `agy` |
+| `AGY_BINARY` | Path to Antigravity CLI (`agy`) binary (fallback if `GEMINI_API_KEY` is unset) | `/usr/local/bin/agy` (in container) / `agy` |
 | `AGY_WORKSPACE` | Workspace directory passed to `agy` via `--add-dir` for rules/customizations | `/workspace` (in container) |
+| `GEMINI_API_KEY` | Google Gemini API key for lightweight direct API mode (recommended in K8s) | Optional |
+| `GEMINI_MODEL` | Gemini model ID used when `GEMINI_API_KEY` is configured | `gemini-2.5-flash` |
 
 ---
 
@@ -95,7 +97,7 @@ flowchart TD
 # Build solution
 dotnet build Jarvis.Sharp.slnx
 
-# Run unit test suite (26 tests)
+# Run unit test suite (29 tests)
 dotnet test Jarvis.Sharp.slnx
 
 # Run daemon locally

@@ -1,5 +1,6 @@
 namespace Jarvis.Sharp.Slack;
 
+using System.Net.Http.Json;
 using Jarvis.Sharp.Security;
 using Jarvis.Sharp.Services;
 using Microsoft.Extensions.Logging;
@@ -13,17 +14,20 @@ public class AgyCommandHandler : ISlashCommandHandler
     private readonly AuthorizationGuard _authGuard;
     private readonly RateLimiter _rateLimiter;
     private readonly IAgentBridge _agentBridge;
+    private readonly HttpClient _httpClient;
 
     public AgyCommandHandler(
         ILogger<AgyCommandHandler> logger,
         AuthorizationGuard authGuard,
         RateLimiter rateLimiter,
-        IAgentBridge agentBridge)
+        IAgentBridge agentBridge,
+        HttpClient? httpClient = null)
     {
         _logger = logger;
         _authGuard = authGuard;
         _rateLimiter = rateLimiter;
         _agentBridge = agentBridge;
+        _httpClient = httpClient ?? new HttpClient();
     }
 
     public async Task<SlashCommandResponse> Handle(SlashCommand command)
@@ -50,6 +54,18 @@ public class AgyCommandHandler : ISlashCommandHandler
                 ["channel_id"] = command.ChannelId ?? "direct",
                 ["command"] = "/agy"
             };
+
+            if (!string.IsNullOrWhiteSpace(command.ResponseUrl))
+            {
+                var responseUrl = command.ResponseUrl;
+                _ = Task.Run(async () => await DispatchAsyncReply(responseUrl, prompt, context));
+
+                return new SlashCommandResponse
+                {
+                    ResponseType = ResponseType.Ephemeral,
+                    Message = new Message { Text = "⏳ Asking Antigravity..." }
+                };
+            }
 
             var reply = await _agentBridge.AskAsync(prompt, context);
 
@@ -85,6 +101,40 @@ public class AgyCommandHandler : ISlashCommandHandler
                 ResponseType = ResponseType.Ephemeral,
                 Message = new Message { Text = $"⚠️ Error communicating with Antigravity: {ex.Message}" }
             };
+        }
+    }
+
+    private async Task DispatchAsyncReply(string responseUrl, string prompt, Dictionary<string, string> context)
+    {
+        try
+        {
+            var reply = await _agentBridge.AskAsync(prompt, context);
+            var payload = new
+            {
+                text = reply,
+                response_type = "in_channel"
+            };
+            using var response = await _httpClient.PostAsJsonAsync(responseUrl, payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Slack ResponseUrl returned HTTP {StatusCode} for /agy reply.", (int)response.StatusCode);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to dispatch async /agy reply to ResponseUrl");
+            try
+            {
+                await _httpClient.PostAsJsonAsync(responseUrl, new
+                {
+                    text = $"⚠️ Error communicating with Antigravity: {ex.Message}",
+                    response_type = "ephemeral"
+                });
+            }
+            catch
+            {
+                // Best effort error notification
+            }
         }
     }
 }

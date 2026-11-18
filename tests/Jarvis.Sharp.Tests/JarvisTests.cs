@@ -699,6 +699,116 @@ public class StateAndCommandTests
     }
 
     [Fact]
+    public async Task AgentBridge_AskAsync_ShouldUseGeminiApi_WhenApiKeyConfigured()
+    {
+        var handler = new StubGeminiHttpHandler(
+            System.Net.HttpStatusCode.OK,
+            """{"candidates":[{"content":{"parts":[{"text":"Hi from Gemini!"}]}}]}""");
+        var bridge = new AgentBridge(
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentBridge>.Instance,
+            new StubKubernetesDiagnostics(),
+            httpClient: new HttpClient(handler),
+            geminiApiKey: "test-gemini-key",
+            geminiModel: "gemini-2.5-flash");
+
+        var reply = await bridge.AskAsync("say hi", new Dictionary<string, string> { ["slack_user"] = "U123" });
+
+        Assert.Equal("Hi from Gemini!", reply);
+        Assert.NotNull(handler.LastRequest);
+        Assert.Contains("models/gemini-2.5-flash:generateContent", handler.LastRequest!.RequestUri!.ToString());
+        Assert.Equal("test-gemini-key", handler.LastRequest.Headers.GetValues("x-goog-api-key").Single());
+    }
+
+    [Fact]
+    public async Task AgentBridge_AskAsync_ShouldReturnErrorNotice_WhenGeminiApiFails()
+    {
+        var handler = new StubGeminiHttpHandler(System.Net.HttpStatusCode.Unauthorized, """{"error":"bad key"}""");
+        var bridge = new AgentBridge(
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentBridge>.Instance,
+            new StubKubernetesDiagnostics(),
+            httpClient: new HttpClient(handler),
+            geminiApiKey: "bad-key");
+
+        var reply = await bridge.AskAsync("say hi");
+        Assert.Contains("HTTP 401", reply);
+    }
+
+    [Fact]
+    public async Task AgyCommandHandler_ShouldAckImmediatelyAndPostToResponseUrl_WhenResponseUrlPresent()
+    {
+        var tcs = new TaskCompletionSource<string>();
+        var responseHandler = new CallbackHttpHandler(body => tcs.TrySetResult(body));
+        var bridge = new StubAgentBridge("Hello from Jarvis!");
+        var handler = new Jarvis.Sharp.Slack.AgyCommandHandler(
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<Jarvis.Sharp.Slack.AgyCommandHandler>.Instance,
+            new AuthorizationGuard("U_AUTH"),
+            new RateLimiter(),
+            bridge,
+            new HttpClient(responseHandler));
+
+        var command = new SlackNet.Interaction.SlashCommand
+        {
+            UserId = "U_AUTH",
+            ChannelId = "C123",
+            Text = "say hi",
+            ResponseUrl = "https://hooks.slack.com/commands/test/123"
+        };
+
+        var ack = await handler.Handle(command);
+        Assert.Equal(SlackNet.Interaction.ResponseType.Ephemeral, ack.ResponseType);
+        Assert.Contains("Asking Antigravity", ack.Message.Text);
+
+        var postedBody = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Contains("Hello from Jarvis!", postedBody);
+        Assert.Contains("\"response_type\":\"in_channel\"", postedBody);
+    }
+
+    private sealed class StubAgentBridge : IAgentBridge
+    {
+        private readonly string _reply;
+        public StubAgentBridge(string reply) => _reply = reply;
+        public Task<string> AskAsync(string prompt, IDictionary<string, string>? context = null, CancellationToken cancellationToken = default)
+            => Task.FromResult(_reply);
+        public Task<string> TriageAlertAsync(string alertText, string @namespace, string deployment, string pod, CancellationToken cancellationToken = default)
+            => Task.FromResult(_reply);
+    }
+
+    private sealed class StubGeminiHttpHandler : HttpMessageHandler
+    {
+        private readonly System.Net.HttpStatusCode _statusCode;
+        private readonly string _body;
+        public HttpRequestMessage? LastRequest { get; private set; }
+
+        public StubGeminiHttpHandler(System.Net.HttpStatusCode statusCode, string body)
+        {
+            _statusCode = statusCode;
+            _body = body;
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            LastRequest = request;
+            return Task.FromResult(new HttpResponseMessage(_statusCode)
+            {
+                Content = new StringContent(_body, Encoding.UTF8, "application/json")
+            });
+        }
+    }
+
+    private sealed class CallbackHttpHandler : HttpMessageHandler
+    {
+        private readonly Action<string> _onBody;
+        public CallbackHttpHandler(Action<string> onBody) => _onBody = onBody;
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var body = request.Content != null ? await request.Content.ReadAsStringAsync(cancellationToken) : string.Empty;
+            _onBody(body);
+            return new HttpResponseMessage(System.Net.HttpStatusCode.OK);
+        }
+    }
+
+    [Fact]
     public async Task AgentBridge_AskAsync_ShouldReturnFriendlyNotice_WhenBinaryIsMissing()
     {
         var bridge = new AgentBridge(
