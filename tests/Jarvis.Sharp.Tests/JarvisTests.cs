@@ -709,13 +709,13 @@ public class StateAndCommandTests
             new StubKubernetesDiagnostics(),
             httpClient: new HttpClient(handler),
             geminiApiKey: "test-gemini-key",
-            geminiModel: "gemini-2.5-flash");
+            geminiModel: "gemini-3.8-flash");
 
         var reply = await bridge.AskAsync("say hi", new Dictionary<string, string> { ["slack_user"] = "U123" });
 
         Assert.Equal("Hi from Gemini!", reply);
         Assert.NotNull(handler.LastRequest);
-        Assert.Contains("models/gemini-2.5-flash:generateContent", handler.LastRequest!.RequestUri!.ToString());
+        Assert.Contains("models/gemini-3.8-flash:generateContent", handler.LastRequest!.RequestUri!.ToString());
         Assert.Equal("test-gemini-key", handler.LastRequest.Headers.GetValues("x-goog-api-key").Single());
     }
 

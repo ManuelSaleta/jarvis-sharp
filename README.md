@@ -85,7 +85,7 @@ flowchart TD
 | `AGY_BINARY` | Path to Antigravity CLI (`agy`) binary (fallback if `GEMINI_API_KEY` is unset) | `/usr/local/bin/agy` (in container) / `agy` |
 | `AGY_WORKSPACE` | Workspace directory passed to `agy` via `--add-dir` for rules/customizations | `/workspace` (in container) |
 | `GEMINI_API_KEY` | Google Gemini API key for lightweight direct API mode (recommended in K8s) | Optional |
-| `GEMINI_MODEL` | Gemini model ID used when `GEMINI_API_KEY` is configured | `gemini-2.5-flash` |
+| `GEMINI_MODEL` | Gemini model ID used when `GEMINI_API_KEY` is configured | `gemini-3.8-flash` |
 
 ---
 
