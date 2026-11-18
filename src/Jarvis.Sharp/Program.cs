@@ -78,7 +78,7 @@ public static class Program
             }
         });
         builder.Services.AddSingleton<IKubernetesDiagnostics, KubernetesDiagnostics>();
-        builder.Services.AddSingleton<IAgentBridge, AgentBridge>();
+        builder.Services.AddHttpClient<IAgentBridge, AgentBridge>();
 
         // SlackNet Handlers & Socket Mode Configuration
         var botToken = Environment.GetEnvironmentVariable("SLACK_BOT_TOKEN")?.Trim();
