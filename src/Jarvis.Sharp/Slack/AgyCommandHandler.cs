@@ -3,6 +3,7 @@ namespace Jarvis.Sharp.Slack;
 using System.Net.Http.Json;
 using Jarvis.Sharp.Security;
 using Jarvis.Sharp.Services;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using SlackNet;
 using SlackNet.Interaction;
@@ -14,7 +15,23 @@ public class AgyCommandHandler : ISlashCommandHandler
     private readonly AuthorizationGuard _authGuard;
     private readonly RateLimiter _rateLimiter;
     private readonly IAgentBridge _agentBridge;
-    private readonly HttpClient _httpClient;
+    private readonly IHttpClientFactory? _httpClientFactory;
+    private readonly HttpClient? _httpClient;
+
+    [ActivatorUtilitiesConstructor]
+    public AgyCommandHandler(
+        ILogger<AgyCommandHandler> logger,
+        AuthorizationGuard authGuard,
+        RateLimiter rateLimiter,
+        IAgentBridge agentBridge,
+        IHttpClientFactory httpClientFactory)
+    {
+        _logger = logger;
+        _authGuard = authGuard;
+        _rateLimiter = rateLimiter;
+        _agentBridge = agentBridge;
+        _httpClientFactory = httpClientFactory;
+    }
 
     public AgyCommandHandler(
         ILogger<AgyCommandHandler> logger,
@@ -106,6 +123,7 @@ public class AgyCommandHandler : ISlashCommandHandler
 
     private async Task DispatchAsyncReply(string responseUrl, string prompt, Dictionary<string, string> context)
     {
+        var client = _httpClientFactory?.CreateClient() ?? _httpClient ?? new HttpClient();
         try
         {
             var reply = await _agentBridge.AskAsync(prompt, context);
@@ -114,7 +132,7 @@ public class AgyCommandHandler : ISlashCommandHandler
                 text = reply,
                 response_type = "in_channel"
             };
-            using var response = await _httpClient.PostAsJsonAsync(responseUrl, payload);
+            using var response = await client.PostAsJsonAsync(responseUrl, payload);
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogWarning("Slack ResponseUrl returned HTTP {StatusCode} for /agy reply.", (int)response.StatusCode);
@@ -125,7 +143,7 @@ public class AgyCommandHandler : ISlashCommandHandler
             _logger.LogError(ex, "Failed to dispatch async /agy reply to ResponseUrl");
             try
             {
-                await _httpClient.PostAsJsonAsync(responseUrl, new
+                await client.PostAsJsonAsync(responseUrl, new
                 {
                     text = $"⚠️ Error communicating with Antigravity: {ex.Message}",
                     response_type = "ephemeral"

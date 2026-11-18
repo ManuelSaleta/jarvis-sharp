@@ -9,7 +9,7 @@ using Microsoft.Extensions.Logging;
 
 public class AgentBridge : IAgentBridge
 {
-    private const string DefaultGeminiModel = "gemini-2.5-flash";
+    private const string DefaultGeminiModel = "gemini-3.8-flash";
     private const string SystemInstructionText =
         "You are Jarvis, an autonomous homelab ChatOps & Kubernetes SRE assistant. " +
         "Be concise, technical, and actionable. Format responses cleanly for Slack mrkdwn.";
