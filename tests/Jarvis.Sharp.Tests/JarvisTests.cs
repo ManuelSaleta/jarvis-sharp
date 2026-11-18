@@ -157,9 +157,17 @@ public class StateAndCommandTests
             c.RegisterEventHandler<SlackNet.Events.AppMention, Jarvis.Sharp.Slack.AppMentionEventHandler>();
         });
 
+        services.AddSingleton(new AuthorizationGuard("U_TEST"));
+        services.AddSingleton(new RateLimiter());
+        services.AddSingleton<IKubernetesDiagnostics>(new StubKubernetesDiagnostics());
+        services.AddHttpClient<IAgentBridge, AgentBridge>();
+        services.AddTransient<Jarvis.Sharp.Slack.AgyCommandHandler>();
+
         var provider = services.BuildServiceProvider();
         var socketClient = provider.GetService<SlackNet.ISlackSocketModeClient>();
         Assert.NotNull(socketClient);
+        Assert.NotNull(provider.GetRequiredService<IAgentBridge>());
+        Assert.NotNull(provider.GetRequiredService<Jarvis.Sharp.Slack.AgyCommandHandler>());
     }
 
     [Fact]
@@ -744,7 +752,7 @@ public class StateAndCommandTests
             new AuthorizationGuard("U_AUTH"),
             new RateLimiter(),
             bridge,
-            new HttpClient(responseHandler));
+            httpClient: new HttpClient(responseHandler));
 
         var command = new SlackNet.Interaction.SlashCommand
         {
