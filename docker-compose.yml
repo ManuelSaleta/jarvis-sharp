@@ -8,6 +8,12 @@ services:
     restart: unless-stopped
     ports:
       - "8080:8080"
+    labels:
+      homepage.group: "Monitoring"
+      homepage.name: "Jarvis.Sharp"
+      homepage.icon: "si-dotnet"
+      homepage.href: "http://localhost:8080/healthz"
+      homepage.description: "AI Automation & Alerts Triage"
     environment:
       TZ: ${TZ:-America/New_York}
       HOME: /home/app
