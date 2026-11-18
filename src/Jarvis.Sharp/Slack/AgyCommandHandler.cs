@@ -18,33 +18,20 @@ public class AgyCommandHandler : ISlashCommandHandler
     private readonly IHttpClientFactory? _httpClientFactory;
     private readonly HttpClient? _httpClient;
 
-    [ActivatorUtilitiesConstructor]
     public AgyCommandHandler(
         ILogger<AgyCommandHandler> logger,
         AuthorizationGuard authGuard,
         RateLimiter rateLimiter,
         IAgentBridge agentBridge,
-        IHttpClientFactory httpClientFactory)
-    {
-        _logger = logger;
-        _authGuard = authGuard;
-        _rateLimiter = rateLimiter;
-        _agentBridge = agentBridge;
-        _httpClientFactory = httpClientFactory;
-    }
-
-    public AgyCommandHandler(
-        ILogger<AgyCommandHandler> logger,
-        AuthorizationGuard authGuard,
-        RateLimiter rateLimiter,
-        IAgentBridge agentBridge,
+        IHttpClientFactory? httpClientFactory = null,
         HttpClient? httpClient = null)
     {
         _logger = logger;
         _authGuard = authGuard;
         _rateLimiter = rateLimiter;
         _agentBridge = agentBridge;
-        _httpClient = httpClient ?? new HttpClient();
+        _httpClientFactory = httpClientFactory;
+        _httpClient = httpClient;
     }
 
     public async Task<SlashCommandResponse> Handle(SlashCommand command)
@@ -74,6 +61,7 @@ public class AgyCommandHandler : ISlashCommandHandler
 
             if (!string.IsNullOrWhiteSpace(command.ResponseUrl))
             {
+                _logger.LogInformation("🤖 Received /agy command from '{UserId}'; dispatching async reply.", verifiedUser);
                 var responseUrl = command.ResponseUrl;
                 _ = Task.Run(async () => await DispatchAsyncReply(responseUrl, prompt, context));
 
@@ -136,6 +124,10 @@ public class AgyCommandHandler : ISlashCommandHandler
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogWarning("Slack ResponseUrl returned HTTP {StatusCode} for /agy reply.", (int)response.StatusCode);
+            }
+            else
+            {
+                _logger.LogInformation("✅ Posted /agy reply to Slack ResponseUrl.");
             }
         }
         catch (Exception ex)
