@@ -48,7 +48,8 @@ public class DownloadCommandHandler : ISlashCommandHandler
                 };
             }
 
-            var indices = CommandParser.ParseDownloadCommand(rawText);
+            var isIndexSelection = IsPureIndexSelection(rawText);
+            var indices = isIndexSelection ? CommandParser.ParseDownloadCommand(rawText) : Array.Empty<int>();
             if (indices.Count == 0)
             {
                 var directResult = await _dispatcher.DispatchDirectQueryAsync(
@@ -110,5 +111,29 @@ public class DownloadCommandHandler : ISlashCommandHandler
                 Message = new Message { Text = $"⚠️ Failed to process /download command: {ex.Message}" }
             };
         }
+    }
+
+    private static bool IsPureIndexSelection(string text)
+    {
+        var trimmed = text.Trim();
+        if (trimmed.StartsWith("/download", StringComparison.OrdinalIgnoreCase))
+        {
+            trimmed = trimmed[9..].Trim();
+        }
+
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            return false;
+        }
+
+        foreach (var ch in trimmed)
+        {
+            if (!char.IsAsciiDigit(ch) && ch != ',' && !char.IsWhiteSpace(ch))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 }
