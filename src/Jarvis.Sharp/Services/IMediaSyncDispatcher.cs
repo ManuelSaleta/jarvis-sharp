@@ -2,6 +2,7 @@ namespace Jarvis.Sharp.Services;
 
 using System.Net.Http.Headers;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Jarvis.Sharp.Security;
 using Jarvis.Sharp.State;
 
@@ -19,6 +20,13 @@ public interface IMediaSyncDispatcher
     Task<DispatchResult> DispatchApprovedCandidatesAsync(
         string? batchId,
         IEnumerable<int> indices,
+        string requestedBy,
+        string? webhookUrl = null,
+        string? webhookSecret = null,
+        CancellationToken cancellationToken = default);
+
+    Task<DispatchResult> DispatchDirectQueryAsync(
+        string query,
         string requestedBy,
         string? webhookUrl = null,
         string? webhookSecret = null,
@@ -71,6 +79,73 @@ public class MediaSyncDispatcher : IMediaSyncDispatcher
                 "No valid candidates matched the provided indices.");
         }
 
+        return await DispatchItemsAsync(
+            batch.BatchId,
+            selected,
+            requestedBy,
+            webhookUrl,
+            webhookSecret,
+            cancellationToken);
+    }
+
+    public async Task<DispatchResult> DispatchDirectQueryAsync(
+        string query,
+        string requestedBy,
+        string? webhookUrl = null,
+        string? webhookSecret = null,
+        CancellationToken cancellationToken = default)
+    {
+        var item = ParseDirectQuery(query);
+        var batchId = $"direct:{Guid.NewGuid():N}";
+        return await DispatchItemsAsync(
+            batchId,
+            new[] { item },
+            requestedBy,
+            webhookUrl,
+            webhookSecret,
+            cancellationToken);
+    }
+
+    private static CandidateItem ParseDirectQuery(string rawQuery)
+    {
+        var text = rawQuery.Trim();
+        var mediaType = "Movie";
+
+        if (text.StartsWith("tv:", StringComparison.OrdinalIgnoreCase))
+        {
+            mediaType = "TV";
+            text = text[3..].Trim();
+        }
+        else if (text.StartsWith("movie:", StringComparison.OrdinalIgnoreCase))
+        {
+            mediaType = "Movie";
+            text = text[6..].Trim();
+        }
+        else if (text.StartsWith("movies:", StringComparison.OrdinalIgnoreCase))
+        {
+            mediaType = "Movie";
+            text = text[7..].Trim();
+        }
+
+        int? year = null;
+        var yearMatch = Regex.Match(text, @"\s+\(?(19\d\d|20\d\d)\)?$");
+        if (yearMatch.Success && int.TryParse(yearMatch.Groups[1].Value, out var parsedYear))
+        {
+            year = parsedYear;
+            text = text[..yearMatch.Index].Trim();
+        }
+
+        return new CandidateItem(1, text, year, mediaType);
+    }
+
+    private async Task<DispatchResult> DispatchItemsAsync(
+        string batchId,
+        IReadOnlyList<CandidateItem> selected,
+        string requestedBy,
+        string? webhookUrl,
+        string? webhookSecret,
+        CancellationToken cancellationToken)
+    {
         var approved = new List<CandidateItem>();
         var skipped = new List<CandidateItem>();
 
@@ -91,7 +166,7 @@ public class MediaSyncDispatcher : IMediaSyncDispatcher
         {
             return new DispatchResult(
                 false,
-                batch.BatchId,
+                batchId,
                 approved.AsReadOnly(),
                 skipped.AsReadOnly(),
                 "All selected items already exist in the Plex library; nothing dispatched.");
@@ -107,7 +182,7 @@ public class MediaSyncDispatcher : IMediaSyncDispatcher
 
         var payload = new
         {
-            batch_id = batch.BatchId,
+            batch_id = batchId,
             requested_by = requestedBy,
             items = approved
         };
@@ -121,7 +196,7 @@ public class MediaSyncDispatcher : IMediaSyncDispatcher
         request.Headers.Add("X-Signature-SHA256", signature);
 
         var response = await _httpClient.SendAsync(request, cancellationToken);
-        var summary = $"Dispatched {approved.Count} item(s) to media-sync.";
+        var summary = $"Dispatched {approved.Count} item(s) to media-sync: [{string.Join(", ", approved.Select(a => a.Year.HasValue ? $"{a.Title} ({a.Year})" : a.Title))}].";
         if (skipped.Count > 0)
         {
             summary += $" Skipped pre-existing: [{string.Join(", ", skipped.Select(s => s.Title))}].";
@@ -129,7 +204,7 @@ public class MediaSyncDispatcher : IMediaSyncDispatcher
 
         return new DispatchResult(
             response.IsSuccessStatusCode,
-            batch.BatchId,
+            batchId,
             approved.AsReadOnly(),
             skipped.AsReadOnly(),
             summary,

@@ -38,13 +38,27 @@ public class DownloadCommandHandler : ISlashCommandHandler
             var verifiedUser = _authGuard.RequireAuthorized(userId);
             _rateLimiter.Check(verifiedUser);
 
-            var indices = CommandParser.ParseDownloadCommand(command.Text);
-            if (indices.Count == 0)
+            var rawText = command.Text?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(rawText))
             {
                 return new SlashCommandResponse
                 {
                     ResponseType = ResponseType.Ephemeral,
-                    Message = new Message { Text = "⚠️ Please specify candidate item numbers to approve (e.g. `/download 1 3 6`)." }
+                    Message = new Message { Text = "⚠️ Please specify candidate item numbers or a title (e.g. `/download 1 3 6` or `/download Inception 2010`)." }
+                };
+            }
+
+            var indices = CommandParser.ParseDownloadCommand(rawText);
+            if (indices.Count == 0)
+            {
+                var directResult = await _dispatcher.DispatchDirectQueryAsync(
+                    rawText,
+                    requestedBy: $"slack:{verifiedUser}");
+
+                return new SlashCommandResponse
+                {
+                    ResponseType = ResponseType.InChannel,
+                    Message = new Message { Text = directResult.SummaryText }
                 };
             }
 

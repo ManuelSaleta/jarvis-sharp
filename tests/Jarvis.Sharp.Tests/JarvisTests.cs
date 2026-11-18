@@ -621,5 +621,43 @@ public class StateAndCommandTests
                 Array.Empty<CandidateItem>(),
                 "✅ Dispatched mock items"));
         }
+
+        public Task<DispatchResult> DispatchDirectQueryAsync(
+            string query,
+            string requestedBy,
+            string? webhookUrl = null,
+            string? webhookSecret = null,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new DispatchResult(
+                true,
+                "direct-mock",
+                Array.Empty<CandidateItem>(),
+                Array.Empty<CandidateItem>(),
+                $"✅ Dispatched {query}"));
+        }
+    }
+
+    [Fact]
+    public async Task MediaSyncDispatcher_DispatchDirectQuery_ParsesTitleYearAndMediaType()
+    {
+        var handler = new CaptureRequestHttpHandler();
+        var dispatcher = new MediaSyncDispatcher(
+            new HttpClient(handler),
+            new CandidateStateStore(),
+            new AlwaysMissingPlexService());
+
+        var result = await dispatcher.DispatchDirectQueryAsync(
+            "tv: Severance 2022",
+            "slack:U0CHW3DMRM2",
+            webhookUrl: "http://media-sync.local:5050/api/v1/sync/trigger",
+            webhookSecret: "test-secret");
+
+        Assert.True(result.Dispatched);
+        Assert.NotNull(handler.LastBody);
+        var capturedBody = Encoding.UTF8.GetString(handler.LastBody);
+        Assert.Contains("\"title\":\"Severance\"", capturedBody);
+        Assert.Contains("\"year\":2022", capturedBody);
+        Assert.Contains("\"media_type\":\"TV\"", capturedBody);
     }
 }
