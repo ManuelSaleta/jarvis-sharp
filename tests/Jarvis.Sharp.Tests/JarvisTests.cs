@@ -742,6 +742,42 @@ public class StateAndCommandTests
     }
 
     [Fact]
+    public async Task AgentBridge_AskAsync_ShouldFallbackToNextModel_WhenPrimaryModelReturns503()
+    {
+        var requestedUris = new List<string>();
+        var seqHandler = new SequenceGeminiHttpHandler(req =>
+        {
+            requestedUris.Add(req.RequestUri!.ToString());
+            if (requestedUris.Count == 1)
+            {
+                return new HttpResponseMessage(System.Net.HttpStatusCode.ServiceUnavailable)
+                {
+                    Content = new StringContent("""{"error":{"code":503}}""", Encoding.UTF8, "application/json")
+                };
+            }
+
+            return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent("""{"candidates":[{"content":{"parts":[{"text":"Fallback ok!"}]}}]}""", Encoding.UTF8, "application/json")
+            };
+        });
+
+        var bridge = new AgentBridge(
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentBridge>.Instance,
+            new StubKubernetesDiagnostics(),
+            httpClient: new HttpClient(seqHandler),
+            geminiApiKey: "test-gemini-key",
+            geminiModel: "gemini-3.8-flash");
+
+        var reply = await bridge.AskAsync("say hi");
+
+        Assert.Equal("Fallback ok!", reply);
+        Assert.Equal(2, requestedUris.Count);
+        Assert.Contains("models/gemini-3.8-flash:generateContent", requestedUris[0]);
+        Assert.Contains("models/gemini-3.5-flash-lite:generateContent", requestedUris[1]);
+    }
+
+    [Fact]
     public async Task AgyCommandHandler_ShouldAckImmediatelyAndPostToResponseUrl_WhenResponseUrlPresent()
     {
         var tcs = new TaskCompletionSource<string>();
@@ -779,6 +815,15 @@ public class StateAndCommandTests
             => Task.FromResult(_reply);
         public Task<string> TriageAlertAsync(string alertText, string @namespace, string deployment, string pod, CancellationToken cancellationToken = default)
             => Task.FromResult(_reply);
+    }
+
+    private sealed class SequenceGeminiHttpHandler : HttpMessageHandler
+    {
+        private readonly Func<HttpRequestMessage, HttpResponseMessage> _responder;
+        public SequenceGeminiHttpHandler(Func<HttpRequestMessage, HttpResponseMessage> responder) => _responder = responder;
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(_responder(request));
     }
 
     private sealed class StubGeminiHttpHandler : HttpMessageHandler

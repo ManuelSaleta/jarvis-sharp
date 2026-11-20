@@ -9,7 +9,13 @@ using Microsoft.Extensions.Logging;
 
 public class AgentBridge : IAgentBridge
 {
-    private const string DefaultGeminiModel = "gemini-3.8-flash";
+    private const string DefaultGeminiModel = "gemini-3.5-flash-lite";
+    private static readonly string[] FallbackGeminiModels =
+    {
+        "gemini-3.5-flash-lite",
+        "gemini-3-flash-preview",
+        "gemini-3.1-flash-lite"
+    };
     private const string SystemInstructionText =
         "You are Jarvis, an autonomous homelab ChatOps & Kubernetes SRE assistant. " +
         "Be concise, technical, and actionable. Format responses cleanly for Slack mrkdwn.";
@@ -95,7 +101,6 @@ public class AgentBridge : IAgentBridge
 
     private async Task<string> AskGeminiApiAsync(string fullPrompt, CancellationToken cancellationToken)
     {
-        var endpoint = $"https://generativelanguage.googleapis.com/v1beta/models/{Uri.EscapeDataString(_geminiModel)}:generateContent";
         var payload = new
         {
             systemInstruction = new
@@ -112,10 +117,49 @@ public class AgentBridge : IAgentBridge
             }
         };
 
+        var modelsToTry = new List<string> { _geminiModel };
+        foreach (var fallback in FallbackGeminiModels)
+        {
+            if (!modelsToTry.Contains(fallback, StringComparer.OrdinalIgnoreCase))
+            {
+                modelsToTry.Add(fallback);
+            }
+        }
+
+        var perAttemptTimeout = TimeSpan.FromSeconds(25);
+        string? lastError = null;
+
+        foreach (var model in modelsToTry)
+        {
+            var (result, isTerminal, errorMessage) =
+                await TryGeminiModelAsync(model, payload, perAttemptTimeout, cancellationToken);
+
+            if (result is not null)
+            {
+                return result;
+            }
+
+            lastError = errorMessage;
+            if (isTerminal || cancellationToken.IsCancellationRequested)
+            {
+                break;
+            }
+        }
+
+        return lastError ?? $"Gemini API failed for model `{_geminiModel}`.";
+    }
+
+    private async Task<(string? Result, bool IsTerminal, string? ErrorMessage)> TryGeminiModelAsync(
+        string model,
+        object payload,
+        TimeSpan attemptTimeout,
+        CancellationToken cancellationToken)
+    {
+        var endpoint = $"https://generativelanguage.googleapis.com/v1beta/models/{Uri.EscapeDataString(model)}:generateContent";
         try
         {
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            cts.CancelAfter(_timeout);
+            cts.CancelAfter(attemptTimeout);
 
             using var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
             request.Headers.Add("x-goog-api-key", _geminiApiKey);
@@ -126,8 +170,12 @@ public class AgentBridge : IAgentBridge
 
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogWarning("Gemini API returned HTTP {StatusCode}: {Body}", (int)response.StatusCode, body);
-                return $"Gemini API error (HTTP {(int)response.StatusCode}). Verify `GEMINI_API_KEY` and `GEMINI_MODEL` (`{_geminiModel}`).";
+                var statusCode = (int)response.StatusCode;
+                _logger.LogWarning("Gemini API model '{Model}' returned HTTP {StatusCode}: {Body}", model, statusCode, body);
+
+                var isAuthError = response.StatusCode is System.Net.HttpStatusCode.Unauthorized
+                    or System.Net.HttpStatusCode.Forbidden;
+                return (null, isAuthError, $"Gemini API error (HTTP {statusCode}). Verify `GEMINI_API_KEY` and `GEMINI_MODEL` (`{model}`).");
             }
 
             using var doc = JsonDocument.Parse(body);
@@ -154,20 +202,25 @@ public class AgentBridge : IAgentBridge
 
                 if (sb.Length > 0)
                 {
-                    return sb.ToString();
+                    return (sb.ToString(), false, null);
                 }
             }
 
-            return "Gemini API returned an empty response.";
+            return (null, false, "Gemini API returned an empty response.");
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning("Gemini API model '{Model}' timed out after {TimeoutSeconds}s.", model, (int)attemptTimeout.TotalSeconds);
+            return (null, false, $"Gemini API timed out after {(int)attemptTimeout.TotalSeconds}s.");
         }
         catch (OperationCanceledException)
         {
-            return $"Gemini API timed out after {(int)_timeout.TotalSeconds}s.";
+            return (null, true, $"Gemini API timed out after {(int)_timeout.TotalSeconds}s.");
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to invoke Gemini API model '{Model}'", _geminiModel);
-            return $"Gemini API invocation notice: {ex.Message}";
+            _logger.LogWarning(ex, "Failed to invoke Gemini API model '{Model}'", model);
+            return (null, false, $"Gemini API invocation notice: {ex.Message}");
         }
     }
 
